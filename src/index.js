@@ -12,6 +12,7 @@ import { ChatOpenAI } from "@langchain/openai";
 import {
 	HumanMessage
 } from "@langchain/core/messages";
+import {main as mainGraph} from './graphs';
 
 import { v4 as uuidv4 } from 'uuid';
 
@@ -60,7 +61,12 @@ export default {
 			async start(controller) {
 				const encoder = new TextEncoder()
 
-				const streamIterator = await llm.stream(humanMessages)
+				// const streamIterator = await llm.stream(humanMessages)
+				const streamIterator = await mainGraph(humanMessages, {
+					model: model,
+					temperature: temperature,
+					token: env.OPENAI_API_KEY
+				})
 
 				const created = Math.floor(Date.now() / 1000);
 
