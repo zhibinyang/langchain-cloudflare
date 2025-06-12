@@ -25,7 +25,7 @@ export default {
 		const requestId = uuidv4()
 	  const requestObj = await request.json()
 		console.log(requestObj)
-		const { messages, stream = false, model = "doubao-1-5-pro-32k-250115", temperature = 0.7 } = requestObj
+		const { messages, stream = false, model = "doubao-seed-1-6-flash-250615", temperature = 0.7 } = requestObj
 		const llm = new ChatOpenAI({
 			modelName: model,
 			temperature,
