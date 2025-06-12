@@ -65,7 +65,8 @@ export default {
 				const streamIterator = await mainGraph(humanMessages, {
 					model: model,
 					temperature: temperature,
-					token: env.OPENAI_API_KEY
+					token: env.OPENAI_API_KEY,
+					baiduToken: env.BAIDU_API_KEY
 				})
 
 				const created = Math.floor(Date.now() / 1000);
