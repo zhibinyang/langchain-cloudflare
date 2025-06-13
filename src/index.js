@@ -10,7 +10,10 @@
 
 import { ChatOpenAI } from "@langchain/openai";
 import {
-	HumanMessage
+	HumanMessage,
+	AIMessage,
+	SystemMessage,
+	BaseMessage
 } from "@langchain/core/messages";
 import {main as mainGraph} from './graphs';
 
@@ -25,7 +28,7 @@ export default {
 		const requestId = uuidv4()
 	  const requestObj = await request.json()
 		console.log(requestObj)
-		const { messages, stream = false, model = "doubao-seed-1-6-flash-250615", temperature = 0.7 } = requestObj
+		const { messages, stream = false, model = "doubao-seed-1-6-250615", temperature = 0.7 } = requestObj
 		const llm = new ChatOpenAI({
 			modelName: model,
 			temperature,
@@ -36,13 +39,27 @@ export default {
 			},
 		})
 
-		const humanMessages = messages
-			.filter((m) => m.role === "user")
-			.map((m) => new HumanMessage(m.content))
+		// const humanMessages = messages
+		// 	.filter((m) => m.role === "user")
+		// 	.map((m) => new HumanMessage(m.content))
+
+		const langchainMessages = messages.map((m) => {
+			switch (m.role) {
+				case "user":
+					return new HumanMessage(m.content);
+				case "assistant":
+					return new AIMessage(m.content);
+				case "system":
+					return new SystemMessage(m.content);
+				default:
+					// 你可以为其他 role 执行不同逻辑：
+					return new BaseMessage({ role: m.role, content: m.content });
+			}
+		});
 
 		let response = '';
 		if (!stream) {
-			const res = await llm.invoke(humanMessages)
+			const res = await llm.invoke(langchainMessages)
 			return Response.json({
 				id: requestId,
 				object: "chat.completion",
@@ -62,7 +79,7 @@ export default {
 				const encoder = new TextEncoder()
 
 				// const streamIterator = await llm.stream(humanMessages)
-				const streamIterator = await mainGraph(humanMessages, {
+				const streamIterator = await mainGraph(langchainMessages, {
 					model: model,
 					temperature: temperature,
 					token: env.OPENAI_API_KEY,
