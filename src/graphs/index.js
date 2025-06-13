@@ -26,15 +26,14 @@ const entry = async (state) =>{
 		},
 	})
 	const schema = z.object({
-		intent: z.enum(['scenic_check', 'others']).default('others').describe('The intent' +
-				' of' +
-			' the user message'),
+		intent: z.enum(['scenic_check', 'others']).describe('The intent  of the' +
+			' user message， others is the default intent if no scenic spot is mentioned.'),
 		response: z
 			.string()
 			.describe(
 				'A human readable response to the original query, to acknowledge the intent.'
 			),
-		scenic: z.string().optional().describe('The name of the scenic spot, if applicable.'),
+		scenic: z.string().nullable().describe('The name of the scenic spot, if applicable.'),
 	});
 	const response = await llm.withStructuredOutput(schema).invoke(state.messages)
 	console.log(response)
