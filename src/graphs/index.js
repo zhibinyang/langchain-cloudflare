@@ -7,6 +7,7 @@ import { StringOutputParser } from '@langchain/core/output_parsers';
 import { dispatchCustomEvent } from '@langchain/core/callbacks/dispatch';
 import { search } from '../tools/baidu'
 
+const MAX_TURNS = 10;
 let llm;
 
 const ParentState = Annotation.Root({
@@ -29,7 +30,8 @@ const ParentState = Annotation.Root({
 	// 这些字段由 plannerNode 生成，用于驱动下一步流程
 	planner_thought: Annotation({}),
 	nextAction: Annotation({}),
-	tool_calls: Annotation({})
+	tool_calls: Annotation({}),
+	turn_count: Annotation({ }),
 });
 
 const entry = async (state) =>{
@@ -47,7 +49,7 @@ const entry = async (state) =>{
 		}
 	})
 	const lastMessage = state.messages[state.messages.length - 1];
-	return {userInput: lastMessage?.content || ''};
+	return {userInput: lastMessage?.content || '', turn_count: 0 };
 }
 
 const memoryRetrieverNode = async(state)=>{
@@ -68,9 +70,55 @@ const memoryRetrieverNode = async(state)=>{
 }
 
 const plannerNode = async(state) => {
-	console.log('Enter Planner Node');
+	console.log(`Enter Planner Node, turn count: ${state.turn_count}` );
 	const systemPrompt = new SystemMessage(`# 角色定义
 你是一个名为“亲子旅行规划师”的AI助手。你的核心任务是与用户互动，规划一次完美的、个性化的带娃自驾旅行。
+---
+## 可用工具定义 (Available Tools Definition)
+
+你拥有以下工具来帮助你完成规划。在生成 \`tool_calls\` 时，你必须严格使用这里定义的 \`tool_name\` 和 \`parameters\`。
+
+### 1. 百度搜索 (Baidu Search)
+- **tool_name**: \`baidu_search\`
+- **description**: 一个通用的搜索引擎，可以用来查询最新的旅游攻略、目的地的具体信息（如停车情况、游玩项目、开放时间）等。
+- **parameters**:
+  - \`name\`: \`query\`
+  - \`type\`: \`string\`
+  - \`description\`: 你想要搜索的关键词或问题。例如："北京野生动物园 停车攻略" 或 "5岁孩子喜欢什么样的游乐项目"。
+  - \`required\`: true
+
+### 2. 和风天气 (QWeather)
+- **tool_name**: \`qweather\`
+- **description**: 查询指定地点在未来某一天的天气情况，包括逐小时预报。
+- **parameters**:
+  - \`name\`: \`location\`
+  - \`type\`: \`string\`
+  - \`description\`: 需要查询天气的具体地理位置，例如："北京野生动物园" 或 "北京市大兴区"。
+  - \`required\`: true
+  - \`name\`: \`date\`
+  - \`type\`: \`string\`
+  - \`description\`: 需要查询的日期，格式为 "YYYY-MM-DD"。例如："2025-06-14"。
+  - \`required\`: true
+
+### 3. 高德地图 (Gaode Maps)
+- **tool_name**: \`gaode_maps\`
+- **description**: 用于查询车辆导航信息，包括预计时长、实时路况和路线规划。
+- **parameters**:
+  - \`name\`: \`start\`
+  - \`type\`: \`string\`
+  - \`description\`: 导航的起点位置。例如："北京市海淀区中关村"。
+  - \`required\`: true
+  - \`name\`: \`end\`
+  - \`type\`: \`string\`
+  - \`description\`: 导航的终点位置。例如："北京野生动物园"。
+  - \`required\`: true
+
+## 工具辅助信息
+
+### 当前时间戳
+如果需要计算相对时间，请使用当前时间戳作为基准：\`${new Date()}\`。
+
+---
 
 # 核心原则
 1.  **节约至上 (API Efficiency First)**: 你必须严格控制API工具的调用。绝不能一次性调用所有工具查询所有信息。你的目标是“按需查询”，只在绝对必要或用户明确要求时才调用工具。
@@ -198,7 +246,8 @@ const plannerNode = async(state) => {
 
 	const response = await llm.withStructuredOutput(PlannerOutputSchema).invoke([systemPrompt, new HumanMessage(humanMessageContent)])
 
-	dispatchCustomEvent('final', `Thought: ${response.thought}`)
+	dispatchCustomEvent('reasoning', `${response.thought}\n\n`)
+
 	if(response.nextAction === 'ask_user'){
 		dispatchCustomEvent('final', response.responseToUser)
 		return new Command({goto: END, update: {
@@ -212,10 +261,17 @@ const plannerNode = async(state) => {
 				nextAction: response.nextAction,
 				planner_thought: response.thought,
 			}})
-	} else {
+	} else if(state.turn_count > MAX_TURNS){
+		dispatchCustomEvent('final', '对不起，我无法在10轮内完成规划。为了避免资源浪费，我将结束对话。请尝试更具体的请求。')
+		return new Command({goto: END, update: {
+				messages: [new AIMessage("对不起，我无法在10轮内完成规划。请尝试更具体的请求。")],
+			}})
+	}
+	else {
 		return new Command({goto: ['toolExecutor'], update: {
 				nextAction: response.nextAction,
-				tool_calls: response.tool_calls
+				tool_calls: response.tool_calls,
+				turn_count: state.turn_count + 1,
 			}})
 	}
 }
@@ -421,13 +477,21 @@ export async function* main(input, modelConfig){
 
 	for await (const event of events){
 
-		if(event.event === 'on_chat_model_stream' && event.data?.chunk?.content && event.tags?.includes('final')){
-			console.log(event.data?.chunk?.content)
-			yield event.data.chunk
+		if(event.event === 'on_chat_model_stream' && event.data?.chunk?.content){
+			if(event.tags?.includes('final')){
+				yield event.data.chunk
+			} else if (event.tags?.includes('reasoning')) {
+				yield {reasoning: event.data.chunk.content}
+			}
+			// console.log(event.data?.chunk?.content)
 		}
 
 		if (event.event === 'on_custom_event') {
-			yield {content: event.data}
+			if(event.name === 'reasoning'){
+				yield {reasoning: event.data}
+			} else if(event.name === 'final'){
+				yield {content: event.data}
+			}
 		}
 
 		// if(event.event === 'on_chat_model_stream' && event.data?.chunk?.content){

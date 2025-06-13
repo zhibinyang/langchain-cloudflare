@@ -89,7 +89,10 @@ export default {
 				const created = Math.floor(Date.now() / 1000);
 
 				for await (const chunk of streamIterator) {
+					console.log('Received chunk:')
+					console.log(chunk)
 					const token = chunk.content
+					const reasoning = chunk.reasoning
 					response += token
 					const data = JSON.stringify({
 						id: requestId,
@@ -98,7 +101,7 @@ export default {
 						created,
 						choices: [
 							{
-								delta: { content: token, role: 'assistant' },
+								delta: { content: token || '',  reasoning_content: reasoning || '', role: 'assistant' },
 								index: 0
 							}
 						]
