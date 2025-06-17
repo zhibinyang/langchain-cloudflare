@@ -13,12 +13,22 @@
 	"observability": {
 		"enabled": true
 	},
-        "kv_namespaces":[
-        	{
+	"kv_namespaces":[
+		{
 			"binding": "USER_KV",
-      			"id": "6d63fecc59d64ae3a423f259f7530fec"			
+			"id": "6d63fecc59d64ae3a423f259f7530fec"
 		}
-        ]
+	],
+	"vectorize": [
+		{
+			"binding": "VECTORIZE",
+			"index_name": "memory-index"
+		}
+	],
+	"ai": {
+		"binding": "AI"
+	}
+
 	/**
 	 * Smart Placement
 	 * Docs: https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement

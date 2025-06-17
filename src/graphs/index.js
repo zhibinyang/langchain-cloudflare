@@ -9,6 +9,7 @@ import { search } from '../tools/baidu'
 
 const MAX_TURNS = 10;
 let llm;
+let lightLlm;
 
 const ParentState = Annotation.Root({
 	// --- 配置 ---
@@ -45,7 +46,24 @@ const entry = async (state) =>{
 			baseURL: "https://ark.cn-beijing.volces.com/api/v3/",
 		},
 		modelKwargs: {
-			disable_thinking: true,
+			thinking: {
+				type: 'disabled'
+			},
+		}
+	})
+
+	lightLlm = new ChatOpenAI({
+		modelName: 'doubao-seed-1-6-flash-250615',
+		temperature: state.modelConfig.temperature,
+		streaming: true,
+		apiKey: state.modelConfig.token,
+		configuration: {
+			baseURL: "https://ark.cn-beijing.volces.com/api/v3/",
+		},
+		modelKwargs: {
+			thinking: {
+				type: 'disabled'
+			},
 		}
 	})
 	const lastMessage = state.messages[state.messages.length - 1];
@@ -60,13 +78,15 @@ const memoryRetrieverNode = async(state)=>{
 	]
 
 	let memoryString;
-	if (retrievedMemories.length > 0) {
+	if (retrievedMemories) {
 		memoryString = "检索到以下历史偏好信息，请在本次规划中重点参考：\n- " + retrievedMemories.join('\n- ');
 	} else {
 		// 关键改动：返回一个明确的“空状态”消息
 		memoryString = "【状态明确】：未检索到与当前用户相关的历史偏好信息。";
 	}
-	return { memory: memoryString };
+
+	const summaryString = await state.modelConfig.kvStore.get(state.modelConfig.inboundToken, )
+	return { memory: memoryString, summary: summaryString };
 }
 
 const plannerNode = async(state) => {
@@ -250,7 +270,7 @@ const plannerNode = async(state) => {
 
 	if(response.nextAction === 'ask_user'){
 		dispatchCustomEvent('final', response.responseToUser)
-		return new Command({goto: END, update: {
+		return new Command({goto: 'summarizer', update: {
 				messages: [new AIMessage(response.responseToUser)],
 				nextAction: response.nextAction
 			}})
@@ -277,16 +297,28 @@ const plannerNode = async(state) => {
 }
 
 // 模拟百度搜索API
-async function baiduSearch(args) {
+async function baiduSearch(args, state) {
 	console.log(`[工具调用] 百度搜索: ${args.query}`);
-	if (args.query.includes('停车')) {
-		return `关于“${args.query}”的搜索结果：目的地停车场有3个，但节假日期间可能紧张。建议提前出发。`;
-	}
-	return `关于“${args.query}”的搜索结果：以下是4个适合北京4岁娃周日遛娃的地点：
-- **阿派朗创造力公园**：位于通州城市绿心森林公园，有8大板块，科技感十足，全龄适用，可休息、野餐。
-- **冬奥公园马拉松大本营**：儿童游乐设施丰富且免费，有42公里步道，适合跑步骑行，对童车友好，停车也免费。
-- **世界公园**：有小型动物园可喂动物，还有海底小纵队乐园，以及世界微型景观，能让孩子认知世界。
-- **宋庆龄青少年科技文化交流中心**：一楼“启空间”有海洋球池、角色扮演区等，适合低龄宝宝；二楼“创空间”有机器人互动等，能让孩子边玩边学。`;
+	const baidu = new ChatOpenAI({
+		modelName: 'ernie-3.5-8k',
+		streaming: true,
+		apiKey: state.modelConfig.baiduToken,
+		configuration: {
+			baseURL: "https://qianfan.baidubce.com/v2/ai_search/",
+		},
+	})
+	const response = await baidu.withConfig({tags: ['reasoning']}).invoke([new HumanMessage(args.query)])
+	console.log(`百度搜索结果: ${response.content}`);
+	return response.content
+//
+// 	if (args.query.includes('停车')) {
+// 		return `关于“${args.query}”的搜索结果：目的地停车场有3个，但节假日期间可能紧张。建议提前出发。`;
+// 	}
+// 	return `关于“${args.query}”的搜索结果：以下是4个适合北京4岁娃周日遛娃的地点：
+// - **阿派朗创造力公园**：位于通州城市绿心森林公园，有8大板块，科技感十足，全龄适用，可休息、野餐。
+// - **冬奥公园马拉松大本营**：儿童游乐设施丰富且免费，有42公里步道，适合跑步骑行，对童车友好，停车也免费。
+// - **世界公园**：有小型动物园可喂动物，还有海底小纵队乐园，以及世界微型景观，能让孩子认知世界。
+// - **宋庆龄青少年科技文化交流中心**：一楼“启空间”有海洋球池、角色扮演区等，适合低龄宝宝；二楼“创空间”有机器人互动等，能让孩子边玩边学。`;
 }
 
 // 模拟和风天气API
@@ -323,7 +355,7 @@ const toolExecutorNode = async (state) =>{
 		}
 
 		try {
-			const output = await toolFunction(toolArgs);
+			const output = await toolFunction(toolArgs, state);
 			return { toolName, output };
 		} catch (error) {
 			return { toolName, output: `错误：执行工具 "${toolName}" 失败 - ${error.message}` };
@@ -359,33 +391,92 @@ const summarizerNode = async(state) =>{
 	);
 	const {messages, summary} = state;
 	const newDialogueText = messages.slice(-5).map((msg)=>`${msg.role}: ${msg.content}`).join('\n\n---\n\n');
-	const newSummary = summarizerPromptTemplate
-		.pipe(llm)
+	const newSummary = await summarizerPromptTemplate
+		.pipe(lightLlm)
 		.pipe(new StringOutputParser())
 		.invoke({
 			existing_summary: summary,
 			new_dialogue: newDialogueText
 		})
 	console.log(newSummary)
+	await state.modelConfig.kvStore.put(state.modelConfig.inboundToken, newSummary)
 	return {summary: newSummary};
 }
 
-// const baiduTest = async (state) => {
-// 	console.log('Enter baiduTest');
-// 	console.log(state.scenic);
-// 	const baidu = new ChatOpenAI({
-// 		modelName: 'ernie-3.5-8k',
-// 		streaming: true,
-// 		apiKey: state.modelConfig.baiduToken,
-// 		configuration: {
-// 			baseURL: "https://qianfan.baidubce.com/v2/ai_search/",
-// 		},
-// 	})
-// 	const response = await baidu.withConfig({tags: ['final']}).invoke([new HumanMessage(`${state.scenic}怎么样？`)])
-// 	return {
-// 		messages: [response]
-// 	}
-// }
+const memoryRecorderNode = async(state) =>{
+
+	const memoryRecorderPrompt = new PromptTemplate({
+		template: `# ROLE (角色定义)
+你是一位经验丰富的用户画像分析师（User Profile Analyst）。你的任务是深入分析用户与AI助手的对话，从中提炼出关于用户在【亲子自驾游】这个领域里的长期、可复用的核心偏好和禁忌。
+
+# TASK (核心任务)
+请你阅读并分析下面提供的【对话摘要】，然后以JSON数组的格式，输出1到5条关于该用户的核心偏好。
+
+# CORE PRINCIPLES / RULES (核心原则与规则)
+
+1.  **【区分事实 vs. 偏好】**: 你必须严格区分本次旅行的“事实”和用户的长期“偏好”。你的目标是提取偏好，而不是复述事实。
+    * **要提取的偏好 (DO):**
+        * "用户倾向于选择车程在2小时以内的目的地。" (可复用)
+        * "用户的孩子对动物主题的活动有浓厚兴趣。" (可复用)
+        * "用户不喜欢人群过于拥挤和商业化的地方。" (可复用)
+    * **不要提取的事实 (DON'T):**
+        * "用户本次旅行去了北京野生动物园。" (一次性事实)
+        * "AI为用户查询了周六的天气。" (一次性事实)
+        * "用户从北京市海淀区出发。" (可能是事实，但不够通用)
+
+2.  **【归纳与推理】**: 不要满足于用户表面的话语，你需要进行归纳和推理。
+    * **示例**: 如果用户拒绝了A地（车程3小时），接受了B地（车程1.5小时），你应该提炼出的偏好是关于“车程偏好”，而不仅仅是“用户不喜欢A地”。
+
+3.  **【简洁且独立】**: 每一条输出的偏好都应该是一句完整、简洁、独立的陈述句。
+    * **好的例子**: "用户偏好有教育意义的旅行目的地。"
+    * **不好的例子**: "用户说他想去个有教育意义的地方比如博物馆。"
+
+4.  **【第三人称视角】**: 必须使用客观的第三人称视角来描述，例如“用户偏好...”、“用户的孩子喜欢...”。
+
+5.  **【空结果处理】**: 如果对话摘要内容过少，或完全无法提炼出任何有价值的长期偏好，请返回一个空的JSON数组 \`[]\`。
+
+---
+# INPUT (输入)
+
+【对话摘要】:
+{{summary}}
+
+---
+# OUTPUT FORMAT (输出格式)
+
+你的输出**必须**是一个JSON格式的字符串数组 (an array of strings)。
+
+例如:
+["偏好1", "偏好2", "偏好3"]`, // 将上面的提示词模板完整粘贴到这里
+		inputVariables: ["summary"],
+	});
+
+	const PreferencesSchema = z.array(z.string());
+
+	const recorderChain = memoryRecorderPrompt.pipe(
+		lightLlm.withStructuredOutput(PreferencesSchema)
+	);
+
+	const extractedPreferences = await recorderChain.invoke({
+		summary: state.summary,
+	});
+
+	console.log(`---[提炼出的新偏好]---\n`, extractedPreferences);
+
+	if(extractedPreferences && extractedPreferences.length > 0){
+		console.log(`[准备存储 ${extractedPreferences.length} 条新记忆到向量数据库]`)
+		const embeddings = await ai.embed('@cf/baai/bge-base-en-v1.5', extractedPreferences);
+		const vectorsToInsert = embeddings.map((text, i)=>({
+			id: `mem-${state.modelConfig.inboundToken}-${Date.now()}-${i}`,
+			values: embeddings.data[i],
+			metadata: { userId: state.modelConfig.inboundToken, text: text}
+		}))
+		await state.modelConfig.vectorIndex.insert(vectorsToInsert);
+	} else {
+		console.log("[未提炼出新的可存储记忆]");
+	}
+	return {memory: extractedPreferences.join('\n') || '无新偏好可存储'};
+}
 
 const finalResponseNode = async(state)=>{
 	console.log('Enter Final Response Node');
@@ -460,16 +551,18 @@ export async function* main(input, modelConfig){
 	const workflow = new StateGraph(ParentState)
 		.addNode('agent', entry)
 		.addNode('memoryRetriever', memoryRetrieverNode)
-		.addNode('planner', plannerNode, {ends: ['toolExecutor', 'finalResponse', END]})
+		.addNode('planner', plannerNode, {ends: ['toolExecutor', 'finalResponse', 'summarizer']})
 		.addNode('toolExecutor', toolExecutorNode)
 		.addNode('finalResponse', finalResponseNode)
 		.addNode('summarizer', summarizerNode)
+		.addNode('memoryRecorder', memoryRecorderNode )
 		.addEdge(START, 'agent')
 		.addEdge('agent', 'memoryRetriever')
 		.addEdge('memoryRetriever', 'planner')
 		.addEdge('toolExecutor', 'planner')
 		.addEdge('finalResponse', 'summarizer')
-		.addEdge('summarizer', END)
+		.addEdge('summarizer', 'memoryRecorder')
+		.addEdge('memoryRecorder', END)
 
 	const app = workflow.compile()
 

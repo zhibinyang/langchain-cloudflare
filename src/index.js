@@ -22,6 +22,15 @@ import { v4 as uuidv4 } from 'uuid';
 export default {
 	async fetch(request, env, ctx) {
 		const url = new URL(request.url)
+		const inboundAuthorization = request.headers.get("Authorization");
+		let inboundToken = null
+		if(inboundAuthorization) {
+			const parts = inboundAuthorization.split(' ')
+			if (parts.length === 2 && parts[0].toLowerCase() === 'bearer') {
+				inboundToken = parts[1]
+			}
+		}
+
 		if (url.pathname !== "/v1/chat/completions") {
 			return new Response("Not found", { status: 404 })
 		}
@@ -83,14 +92,14 @@ export default {
 					model: model,
 					temperature: temperature,
 					token: env.OPENAI_API_KEY,
-					baiduToken: env.BAIDU_API_KEY
+					baiduToken: env.BAIDU_API_KEY,
+					inboundToken: inboundToken,
+					kvStore: env.USER_KV
 				})
 
 				const created = Math.floor(Date.now() / 1000);
 
 				for await (const chunk of streamIterator) {
-					console.log('Received chunk:')
-					console.log(chunk)
 					const token = chunk.content
 					const reasoning = chunk.reasoning
 					response += token
