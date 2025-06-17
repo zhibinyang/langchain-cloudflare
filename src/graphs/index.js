@@ -71,15 +71,17 @@ const entry = async (state) =>{
 }
 
 const memoryRetrieverNode = async(state)=>{
-	const retrievedMemories = [
-		'坐标: 北京',
-		'年龄: 4岁',
-		'喜欢的活动: 露营，游乐场, 过山车等'
-	]
+
+	const queryVector = await state.modelConfig.ai.run('@cf/baai/bge-m3', {text: [state.userInput]});
+
+	const searchResults = await state.modelConfig.vectorStore.query(queryVector.data[0], {topK: 5, returnMetadata: "all"})
+	console.log(searchResults)
+	const retrievedMemories = searchResults.matches?.map(match => match.metadata.text);
 
 	let memoryString;
-	if (retrievedMemories) {
+	if (retrievedMemories && retrievedMemories.length > 0) {
 		memoryString = "检索到以下历史偏好信息，请在本次规划中重点参考：\n- " + retrievedMemories.join('\n- ');
+		console.log(memoryString);
 	} else {
 		// 关键改动：返回一个明确的“空状态”消息
 		memoryString = "【状态明确】：未检索到与当前用户相关的历史偏好信息。";
@@ -439,7 +441,10 @@ const memoryRecorderNode = async(state) =>{
 # INPUT (输入)
 
 【对话摘要】:
-{{summary}}
+{summary}
+
+【用户输入】:
+{userInput}
 
 ---
 # OUTPUT FORMAT (输出格式)
@@ -448,7 +453,7 @@ const memoryRecorderNode = async(state) =>{
 
 例如:
 ["偏好1", "偏好2", "偏好3"]`, // 将上面的提示词模板完整粘贴到这里
-		inputVariables: ["summary"],
+		inputVariables: ["summary", "userInput"],
 	});
 
 	const PreferencesSchema = z.array(z.string());
@@ -459,19 +464,20 @@ const memoryRecorderNode = async(state) =>{
 
 	const extractedPreferences = await recorderChain.invoke({
 		summary: state.summary,
+		userInput: state.userInput
 	});
 
 	console.log(`---[提炼出的新偏好]---\n`, extractedPreferences);
 
 	if(extractedPreferences && extractedPreferences.length > 0){
 		console.log(`[准备存储 ${extractedPreferences.length} 条新记忆到向量数据库]`)
-		const embeddings = await ai.embed('@cf/baai/bge-base-en-v1.5', extractedPreferences);
-		const vectorsToInsert = embeddings.map((text, i)=>({
+		const embeddings = await state.modelConfig.ai.run('@cf/baai/bge-m3', {text: extractedPreferences});
+		const vectorsToInsert = embeddings.data.map((text, i)=>({
 			id: `mem-${state.modelConfig.inboundToken}-${Date.now()}-${i}`,
 			values: embeddings.data[i],
-			metadata: { userId: state.modelConfig.inboundToken, text: text}
+			metadata: { userId: state.modelConfig.inboundToken, text: extractedPreferences[i] }
 		}))
-		await state.modelConfig.vectorIndex.insert(vectorsToInsert);
+		await state.modelConfig.vectorStore.insert(vectorsToInsert);
 	} else {
 		console.log("[未提炼出新的可存储记忆]");
 	}

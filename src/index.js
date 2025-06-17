@@ -94,7 +94,9 @@ export default {
 					token: env.OPENAI_API_KEY,
 					baiduToken: env.BAIDU_API_KEY,
 					inboundToken: inboundToken,
-					kvStore: env.USER_KV
+					kvStore: env.USER_KV,
+					vectorStore: env.VECTORIZE,
+					ai: env.AI
 				})
 
 				const created = Math.floor(Date.now() / 1000);
