@@ -2,6 +2,7 @@
 	"name": "langchain-cloudflare",
 	"version": "0.0.0",
 	"private": true,
+	"type": "module",
 	"scripts": {
 		"deploy": "wrangler deploy",
 		"dev": "wrangler dev",
@@ -19,6 +20,7 @@
 		"@langchain/langgraph": "^0.3.1",
 		"@langchain/openai": "^0.5.12",
 		"langchain": "^0.3.27",
+		"lodash": "^4.17.21",
 		"zod": "^3.25.63"
 	}
 }

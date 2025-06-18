@@ -93,6 +93,8 @@ export default {
 					temperature: temperature,
 					token: env.OPENAI_API_KEY,
 					baiduToken: env.BAIDU_API_KEY,
+					gaodeToken: env.GAODE_API_KEY,
+					qweatherToken: env.QWEATHER_API_KEY,
 					inboundToken: inboundToken,
 					kvStore: env.USER_KV,
 					vectorStore: env.VECTORIZE,

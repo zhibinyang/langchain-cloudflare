@@ -5,7 +5,9 @@ import {PromptTemplate} from '@langchain/core/prompts'
 import { AIMessage, HumanMessage, SystemMessage } from '@langchain/core/messages';
 import { StringOutputParser } from '@langchain/core/output_parsers';
 import { dispatchCustomEvent } from '@langchain/core/callbacks/dispatch';
-import { search } from '../tools/baidu'
+import { baiduSearch } from '../tools/baidu'
+import { gaodeMaps } from '../tools/gaodemap'
+import { qWeather } from '../tools/qweather'
 
 const MAX_TURNS = 10;
 let llm;
@@ -25,7 +27,10 @@ const ParentState = Annotation.Root({
 	// --- 记忆与上下文 ---
 	memory: Annotation({}),
 	summary: Annotation({}),
-	tool_outputs: Annotation({}),
+	tool_outputs: Annotation({
+		reducer: (current, update) => current.concat(update),
+		default: () => []
+	}),
 
 	// --- Planner的决策输出 ---
 	// 这些字段由 plannerNode 生成，用于驱动下一步流程
@@ -133,6 +138,10 @@ const plannerNode = async(state) => {
   - \`name\`: \`end\`
   - \`type\`: \`string\`
   - \`description\`: 导航的终点位置。例如："北京野生动物园"。
+  - \`required\`: true
+  - \`name\`: \`type\`
+  - \`type\`: \`string\`
+  - \`description\`: 去程或回程，去程为"forward"，回程为"return"。
   - \`required\`: true
 
 ## 工具辅助信息
@@ -251,6 +260,7 @@ const plannerNode = async(state) => {
 		const formattedOutputs = state.tool_outputs
 			.map(r => `工具 "${r.toolName}" 的返回结果:\n${r.output}`)
 			.join('\n\n');
+		console.log(`最近的工具执行结果:\n${formattedOutputs}`);
 		humanMessageContent += `### 最近的工具执行结果 (Latest Tool Outputs)\n${formattedOutputs}\n\n`;
 	}
 
@@ -298,43 +308,6 @@ const plannerNode = async(state) => {
 	}
 }
 
-// 模拟百度搜索API
-async function baiduSearch(args, state) {
-	console.log(`[工具调用] 百度搜索: ${args.query}`);
-	const baidu = new ChatOpenAI({
-		modelName: 'ernie-3.5-8k',
-		streaming: true,
-		apiKey: state.modelConfig.baiduToken,
-		configuration: {
-			baseURL: "https://qianfan.baidubce.com/v2/ai_search/",
-		},
-	})
-	const response = await baidu.withConfig({tags: ['reasoning']}).invoke([new HumanMessage(args.query)])
-	console.log(`百度搜索结果: ${response.content}`);
-	return response.content
-//
-// 	if (args.query.includes('停车')) {
-// 		return `关于“${args.query}”的搜索结果：目的地停车场有3个，但节假日期间可能紧张。建议提前出发。`;
-// 	}
-// 	return `关于“${args.query}”的搜索结果：以下是4个适合北京4岁娃周日遛娃的地点：
-// - **阿派朗创造力公园**：位于通州城市绿心森林公园，有8大板块，科技感十足，全龄适用，可休息、野餐。
-// - **冬奥公园马拉松大本营**：儿童游乐设施丰富且免费，有42公里步道，适合跑步骑行，对童车友好，停车也免费。
-// - **世界公园**：有小型动物园可喂动物，还有海底小纵队乐园，以及世界微型景观，能让孩子认知世界。
-// - **宋庆龄青少年科技文化交流中心**：一楼“启空间”有海洋球池、角色扮演区等，适合低龄宝宝；二楼“创空间”有机器人互动等，能让孩子边玩边学。`;
-}
-
-// 模拟和风天气API
-async function qWeather(args) {
-	console.log(`[工具调用] 和风天气: 查询 ${args.location} 在 ${args.date} 的天气`);
-	return `天气预报：${args.location} 在 ${args.date} 全天晴朗，气温25-32摄氏度，无特殊天气。`;
-}
-
-// 模拟高德地图API
-async function gaodeMaps(args) {
-	console.log(`[工具调用] 高德地图: 从 ${args.start} 到 ${args.end}`);
-	return `导航信息：从 ${args.start} 到 ${args.end} 预计需要1小时45分钟，当前路况良好。`;
-}
-
 const toolRegistry = {
 	baidu_search: baiduSearch,
 	qweather: qWeather,
@@ -358,9 +331,10 @@ const toolExecutorNode = async (state) =>{
 
 		try {
 			const output = await toolFunction(toolArgs, state);
-			return { toolName, output };
+			console.log(output);
+			return { toolName, toolArgs, output  };
 		} catch (error) {
-			return { toolName, output: `错误：执行工具 "${toolName}" 失败 - ${error.message}` };
+			return { toolName, toolArgs, output: `错误：执行工具 "${toolName}" 失败 - ${error.message}` };
 		}
 	});
 

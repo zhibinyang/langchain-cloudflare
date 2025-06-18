@@ -1,38 +1,17 @@
 import { ChatOpenAI } from '@langchain/openai';
+import { HumanMessage } from '@langchain/core/messages';
 
-export async function* search(queryString, config){
-	// const res = await fetch(`mk4wctabd2.re.qweatherapi.com`, {
-	// 	method: 'GET',
-	// 	headers: {
-	// 		'X-Appbuilder-Authorization': `Bearer ${config.BAIDU_API_KEY}`,
-	// 		'Content-Type': 'application/json'
-	// 	},
-	// 	body: JSON.stringify({
-	// 		messages: [
-	// 			{
-	// 				content: queryString,
-	// 				role: 'user'
-	// 			}
-	// 		],
-	// 		stream: true,
-	// 		model: "ernie-3.5-8k",
-	// 		enable_deep_search: false,
-	// 		enable_followup_query: false,
-	// 		resource_type_filter: [{"type": "web", "top_k":10}]
-	// 	})
-	// })
-	//
-	// for await (const chunk of res)
-	//
-	// return res.json()?.choices?.[0]?.message?.content
-
-
+export async function baiduSearch(args, state)  {
+	console.log(`[工具调用] 百度搜索: ${args.query}`);
 	const baidu = new ChatOpenAI({
 		modelName: 'ernie-3.5-8k',
 		streaming: true,
-		apiKey: config.token,
+		apiKey: state.modelConfig.baiduToken,
 		configuration: {
 			baseURL: "https://qianfan.baidubce.com/v2/ai_search/",
 		},
 	})
+	const response = await baidu.withConfig({tags: ['reasoning']}).invoke([new HumanMessage(args.query)])
+	console.log(`百度搜索结果: ${response.content}`);
+	return response.content
 }
